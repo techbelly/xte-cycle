@@ -7,4 +7,4 @@ location:
 timezone: Europe/London
 
 # Typeface for the dashboard: atkinson, inter, overpass or hammersmith (see pipeline/fonts.rb)
-font: inter
+font: fraunces
