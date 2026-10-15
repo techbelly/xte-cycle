@@ -1,0 +1,16 @@
+{
+  "name": "xte-cycle",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "elm make src/Main.elm --optimize --output=site/elm.js",
+    "test": "elm-test",
+    "screenshot": "node screenshot.mjs"
+  },
+  "devDependencies": {
+    "@fontsource/atkinson-hyperlegible": "^5.1.0",
+    "elm": "^0.19.1-6",
+    "elm-test": "^0.19.1-revision12",
+    "playwright": "^1.50.0"
+  }
+}

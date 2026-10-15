@@ -1,0 +1,7 @@
+# Weather is fetched for one point roughly midway along the commute,
+# rounded to ~1 km so the public repo does not pin down an address.
+location:
+  name: Cambridge
+  latitude: 52.20
+  longitude: 0.13
+timezone: Europe/London

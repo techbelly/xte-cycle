@@ -1,0 +1,10 @@
+node_modules/
+elm-stuff/
+site/elm.js
+site/data.js
+site/data.json
+site/frame.png
+site/frame.bin
+site/frame-check.png
+site/fonts/
+.DS_Store

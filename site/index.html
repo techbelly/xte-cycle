@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>xte-cycle</title>
+<style>
+  @font-face { font-family: "Atkinson"; font-weight: 400; src: url(fonts/atkinson-400.woff2) format("woff2"); }
+  @font-face { font-family: "Atkinson"; font-weight: 700; src: url(fonts/atkinson-700.woff2) format("woff2"); }
+  html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+  body { width: 792px; height: 528px; overflow: hidden; font-family: Atkinson, Helvetica, Arial, sans-serif; }
+  .screen { box-sizing: border-box; width: 792px; height: 528px; padding: 18px 26px 14px; display: flex; flex-direction: column; }
+
+  .header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 4px solid #000; padding-bottom: 6px; }
+  .weekday { font-size: 68px; font-weight: 700; letter-spacing: 2px; line-height: 1; }
+  .stamp { text-align: right; font-size: 20px; line-height: 1.2; padding-bottom: 4px; }
+
+  .weather { display: flex; align-items: center; gap: 18px; padding: 10px 0 6px; }
+  .glyph { flex: 0 0 110px; }
+  .temps { flex: 0 0 230px; }
+  .range { font-size: 52px; font-weight: 700; line-height: 1; }
+  .range .low { font-size: 30px; font-weight: 400; }
+  .summary { font-size: 26px; margin-top: 2px; }
+  .sun { font-size: 17px; margin-top: 2px; white-space: pre; }
+
+  .strip { flex: 1; }
+  .cols { display: flex; align-items: flex-end; gap: 6px; height: 92px; }
+  .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
+  .gust { font-size: 18px; font-weight: 700; line-height: 1; height: 16px; }
+  .barwrap { height: 60px; display: flex; align-items: flex-end; width: 100%; border-bottom: 2px solid #000; }
+  .bar { width: 100%; background: #000; }
+  .hour { font-size: 15px; margin-top: 3px; }
+  .striplabel { font-size: 15px; text-align: right; margin-top: 2px; }
+
+  .verdicts { display: flex; gap: 18px; flex: 1; }
+  .card { flex: 1; border: 4px solid #000; padding: 8px 14px; display: flex; flex-direction: column; }
+  .card .label { font-size: 18px; letter-spacing: 3px; font-weight: 700; }
+  .callrow { display: flex; align-items: center; gap: 10px; }
+  .card .word { font-size: 54px; font-weight: 700; line-height: 1; }
+  .card .extra { font-size: 19px; min-height: 22px; }
+  .card .reason { font-size: 21px; margin-top: auto; }
+  .card.train { background: #000; color: #fff; }
+  .card.train svg { stroke: #fff; }
+  .card.train svg [fill="black"] { fill: #fff; }
+
+  .dayoff { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; border: 4px solid #000; text-align: center; }
+  .dayoff .word { font-size: 64px; font-weight: 700; }
+  .dayoff .extra { font-size: 22px; margin-top: 8px; }
+
+  .footer { font-size: 23px; font-style: italic; text-align: center; padding-top: 10px; }
+  .error pre { font-size: 14px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="data.js"></script>
+<script src="elm.js"></script>
+<script>
+  Elm.Main.init({ node: document.getElementById("app"), flags: window.XTE_DATA || null });
+</script>
+</body>
+</html>
