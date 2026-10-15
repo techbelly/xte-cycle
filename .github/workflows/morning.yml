@@ -42,11 +42,6 @@ jobs:
           bundle exec rake test
           npx elm-test
 
-      - name: Fonts
-        run: |
-          mkdir -p site/fonts
-          cp node_modules/@fontsource/atkinson-hyperlegible/files/atkinson-hyperlegible-latin-400-normal.woff2 site/fonts/atkinson-400.woff2
-          cp node_modules/@fontsource/atkinson-hyperlegible/files/atkinson-hyperlegible-latin-700-normal.woff2 site/fonts/atkinson-700.woff2
 
       - name: Build frame
         run: bundle exec rake build

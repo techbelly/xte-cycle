@@ -107,7 +107,6 @@ label colW h =
         , y (String.fromInt (plotHeight + labelHeight - 4))
         , textAnchor "middle"
         , fontSize "15"
-        , fontFamily "Atkinson, Helvetica, Arial, sans-serif"
         ]
         [ text (String.fromInt h.hour) ]
 
