@@ -5,6 +5,7 @@ import Delight
 import Html exposing (..)
 import Html.Attributes exposing (class, style)
 import Icons
+import Rain
 import Rules exposing (Call, Verdict(..), Window)
 
 
@@ -58,33 +59,14 @@ weatherRow data =
             , div [ class "summary" ] [ text (summary data.daily.code) ]
             , div [ class "sun" ] [ text ("sunrise " ++ data.daily.sunrise ++ "  ·  sunset " ++ data.daily.sunset) ]
             ]
-        , hourStrip data.hours
+        , hourStrip data
         ]
 
 
-{-| Rain chance per hour from 05:00 to 18:00 as bars, with a tick above any
-hour whose gusts reach 40 km/h.
--}
-hourStrip : List Hour -> Html msg
-hourStrip hours =
-    let
-        shown =
-            List.filter (\h -> h.hour >= 5 && h.hour <= 18) hours
-
-        bar h =
-            let
-                px =
-                    Basics.max 2 (round (toFloat h.rainProb * 0.6))
-            in
-            div [ class "col" ]
-                [ div [ class "gust" ] [ text (if h.gust >= 40 then "~" else " ") ]
-                , div [ class "barwrap" ]
-                    [ div [ class "bar", style "height" (String.fromInt px ++ "px") ] [] ]
-                , div [ class "hour" ] [ text (String.fromInt h.hour) ]
-                ]
-    in
+hourStrip : Data -> Html msg
+hourStrip data =
     div [ class "strip" ]
-        [ div [ class "cols" ] (List.map bar shown)
+        [ Rain.strip data.yday data.hours
         , div [ class "striplabel" ] [ text "rain chance by hour" ]
         ]
 
