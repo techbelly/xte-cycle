@@ -41,6 +41,13 @@ maxDropsPerHour =
     22
 
 
+{-| Hours when Ben is actually on the road. The baseline is thicker under them.
+-}
+commuteHours : List Int
+commuteHours =
+    [ 6, 7, 16, 17 ]
+
+
 strip : Int -> List Hour -> Html msg
 strip seed hours =
     let
@@ -68,8 +75,25 @@ strip seed hours =
             ]
             []
             :: List.map (label colW) shown
+            ++ List.map (commuteMark colW) (List.filter (\h -> List.member h.hour commuteHours) shown)
             ++ drops
         )
+
+
+commuteMark : Float -> Hour -> Svg msg
+commuteMark colW h =
+    let
+        x0 =
+            toFloat (h.hour - firstHour) * colW
+    in
+    rect
+        [ x (String.fromFloat x0)
+        , y (String.fromInt (plotHeight - 3))
+        , Svg.Attributes.width (String.fromFloat colW)
+        , Svg.Attributes.height "7"
+        , fill "black"
+        ]
+        []
 
 
 label : Float -> Hour -> Svg msg
