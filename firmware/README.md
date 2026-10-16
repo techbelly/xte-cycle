@@ -65,6 +65,12 @@ Back up the stock flash (device powered on first, then cable):
   Restore with `esptool --chip esp32c3 write-flash 0x0 backup/x3-stock-20261016.bin`.
 - **Timer wake works.** `sleeptest/` deep-sleeps 20 s and wakes with
   `ESP_SLEEP_WAKEUP_TIMER`, repeatedly, on USB power. GPIO13 held HIGH during sleep.
+- **GPIO13 is the battery switch**, settled by `railtest/` on battery: driving it
+  LOW before sleep powers the device off (no timer wake, cold boot on the next
+  button press). On USB it makes no difference. So the firmware holds it HIGH
+  through sleep; the SDK profile's "SD rail" description is not the whole story.
+- Sleep-current savings available: the QMI8658 tilt sensor is put to sleep every
+  boot (firmware does this), and the SD card can simply be removed.
 - The panel is **not** an SSD1677: xteinkos's SSD1677 driver gets "Busy Timeout".
   Use the FreeInk SDK display driver from CrossPoint, which probes UC8253 / UC8279d.
 - Flashing tip: `pio run -t upload` at 921600 can drop mid-write ("chip stopped

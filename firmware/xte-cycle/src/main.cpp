@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <BoardConfig.h>
 #include <FreeInkDisplay.h>
+#include <Imu.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <XteinkDetect.h>
@@ -210,6 +211,14 @@ void setup() {
   if (BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279) {
     BoardConfig::selectDevice(BoardConfig::Board::XteinkX3Uc8279);
   }
+  // The tilt sensor idles at a few hundred microamps unless told to sleep, and
+  // a reset leaves it awake. We never read it, so put it to sleep every boot.
+  {
+    freeink::Imu imu;
+    const bool slept = imu.begin() && imu.sleep();
+    Serial.printf("XTE imu %s\n", slept ? "asleep" : "not found");
+  }
+
   SPI.begin(8, 7, 10, 21);
   display.setDisplayX3();
   display.begin();
