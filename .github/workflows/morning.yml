@@ -2,12 +2,18 @@ name: morning
 
 on:
   schedule:
-    # The device wakes at 04:00 and 18:00 local. Build at 03:15 and 17:15 local,
-    # whichever of GMT or BST applies; the extra run each time is harmless.
+    # The device wakes at 04:00 and 18:00 local. Build at 03:15 and again at
+    # 03:45 local as a retry, whichever of GMT or BST applies, and likewise
+    # before 18:00. Runs that land on the "wrong" side of the clock change are
+    # harmless: they just rebuild with fresher data.
     - cron: "15 2 * * *"
+    - cron: "45 2 * * *"
     - cron: "15 3 * * *"
+    - cron: "45 3 * * *"
     - cron: "15 16 * * *"
+    - cron: "45 16 * * *"
     - cron: "15 17 * * *"
+    - cron: "45 17 * * *"
   workflow_dispatch:
   push:
     branches: [main]

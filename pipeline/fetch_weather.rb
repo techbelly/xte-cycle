@@ -11,6 +11,7 @@
 
 require "json"
 require "net/http"
+require "openssl"
 require "time"
 require "uri"
 require "yaml"
@@ -40,14 +41,28 @@ params = {
 uri = URI("https://api.open-meteo.com/v1/forecast")
 uri.query = URI.encode_www_form(params)
 
-def fetch_with_retry(uri, attempts: 5)
+# Open-Meteo's free tier returns 503 "overloaded" now and then, and GitHub's
+# runners occasionally time out connecting. Back off exponentially: waits of
+# 5, 10, 20, 40, 80 and 160 seconds, about five minutes in total. The cron has a
+# 45-minute margin before the device wakes, and a second run follows 30 minutes
+# later anyway.
+def fetch_with_retry(uri, attempts: 7)
   attempts.times do |i|
-    res = Net::HTTP.get_response(uri)
-    body = JSON.parse(res.body)
-    return body if res.is_a?(Net::HTTPSuccess) && body["hourly"]
+    begin
+      res = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 20, read_timeout: 30) do |http|
+        req = Net::HTTP::Get.new(uri)
+        req["User-Agent"] = "xte-cycle (github.com/techbelly/xte-cycle)"
+        http.request(req)
+      end
+      body = JSON.parse(res.body)
+      return body if res.is_a?(Net::HTTPSuccess) && body["hourly"]
 
-    warn "Open-Meteo attempt #{i + 1}: #{res.code} #{body['reason']}"
-    sleep(2**i)
+      warn "Open-Meteo attempt #{i + 1}: HTTP #{res.code} #{body['reason']}"
+    rescue Net::OpenTimeout, Net::ReadTimeout, SocketError, Errno::ECONNRESET, Errno::ECONNREFUSED,
+           OpenSSL::SSL::SSLError, JSON::ParserError, EOFError => e
+      warn "Open-Meteo attempt #{i + 1}: #{e.class}: #{e.message}"
+    end
+    sleep(5 * 2**i) if i < attempts - 1
   end
   abort "Open-Meteo did not answer after #{attempts} attempts"
 end
