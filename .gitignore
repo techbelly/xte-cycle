@@ -13,3 +13,4 @@ backup/
 firmware/sleeptest/.pio/
 firmware/xte-cycle/.pio/
 firmware/xte-cycle/secrets.ini
+firmware/railtest/.pio/
