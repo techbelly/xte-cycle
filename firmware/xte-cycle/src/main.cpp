@@ -14,12 +14,13 @@
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_sleep.h>
+#include <esp_sntp.h>
 #include <time.h>
 
 static const int WAKE_HOURS[] = {4, 18};
 static const int RETRY_MINUTES = 30;
 static const char* TZ_LONDON = "GMT0BST,M3.5.0/1,M10.5.0";
-static const uint32_t WIFI_TIMEOUT_MS = 20000;
+static const uint32_t WIFI_TIMEOUT_MS = 30000;
 static const uint32_t NTP_TIMEOUT_MS = 10000;
 
 freeink::FreeInkDisplay display(8, 10, 21, 4, 5, 6);
@@ -52,12 +53,30 @@ static void sleepFor(uint64_t seconds, const char* why) {
 }
 
 static bool connectWifi() {
+  WiFi.onEvent(
+      [](WiFiEvent_t, WiFiEventInfo_t info) {
+        // 15 = 4-way handshake timeout (wrong password), 201 = no AP found, 202 = auth failed
+        Serial.printf("XTE wifi disconnected reason=%d\n", (int)info.wifi_sta_disconnected.reason);
+      },
+      ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   const uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) delay(100);
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("XTE wifi failed");
+    Serial.printf("XTE wifi failed status=%d\n", (int)WiFi.status());
+    // Diagnose without printing names: is the configured network even visible?
+    WiFi.disconnect();
+    const int n = WiFi.scanNetworks();
+    bool seen = false;
+    for (int i = 0; i < n; i++) {
+      if (WiFi.SSID(i) == WIFI_SSID) {
+        seen = true;
+        Serial.printf("XTE target network visible: ch=%d rssi=%d auth=%d\n", WiFi.channel(i), WiFi.RSSI(i),
+                      (int)WiFi.encryptionType(i));
+      }
+    }
+    if (!seen) Serial.printf("XTE target network NOT visible among %d networks on 2.4 GHz\n", n);
     return false;
   }
   Serial.printf("XTE wifi ok %s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
@@ -69,12 +88,18 @@ static bool haveTime() {
   return now > 1700000000;  // after Nov 2023, so not the 1970 default
 }
 
+// Waits for SNTP to actually complete: the RTC can hold a stale but plausible
+// time across resets, so "time looks sane" is not enough to schedule a wake.
 static bool syncTime() {
   configTzTime(TZ_LONDON, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
   const uint32_t start = millis();
-  while (!haveTime() && millis() - start < NTP_TIMEOUT_MS) delay(100);
-  if (!haveTime()) {
-    Serial.println("XTE ntp failed");
+  bool synced = false;
+  while (!synced && millis() - start < NTP_TIMEOUT_MS) {
+    synced = esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
+    if (!synced) delay(100);
+  }
+  if (!synced) {
+    Serial.printf("XTE ntp failed (clock %s)\n", haveTime() ? "plausible but unverified" : "unset");
     return false;
   }
   time_t now = time(nullptr);
@@ -108,6 +133,17 @@ static uint64_t secondsToNextWake() {
 
 enum class Fetch { Painted, Unchanged, Failed };
 
+static char responseEtag[96] = {0};
+
+// esp_http_client only exposes response headers through this event.
+static esp_err_t onHttpEvent(esp_http_client_event_t* evt) {
+  if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key && evt->header_value &&
+      strcasecmp(evt->header_key, "ETag") == 0) {
+    strlcpy(responseEtag, evt->header_value, sizeof(responseEtag));
+  }
+  return ESP_OK;
+}
+
 // Streams the frame straight into the display buffer. Paints only when the
 // full expected length arrived.
 static Fetch fetchAndPaint() {
@@ -119,6 +155,8 @@ static Fetch fetchAndPaint() {
   cfg.timeout_ms = 15000;
   cfg.crt_bundle_attach = esp_crt_bundle_attach;
   cfg.buffer_size = 2048;
+  cfg.event_handler = onHttpEvent;
+  responseEtag[0] = 0;
   esp_http_client_handle_t client = esp_http_client_init(&cfg);
   if (!client) return Fetch::Failed;
   esp_http_client_set_header(client, "User-Agent", "xte-cycle/1.0 (ESP32-C3)");
@@ -128,8 +166,7 @@ static Fetch fetchAndPaint() {
   if (esp_http_client_open(client, 0) == ESP_OK) {
     const int64_t contentLength = esp_http_client_fetch_headers(client);
     const int status = esp_http_client_get_status_code(client);
-    char* etag = nullptr;
-    esp_http_client_get_header(client, "ETag", &etag);
+    const char* etag = responseEtag[0] ? responseEtag : nullptr;
     Serial.printf("XTE http %d len=%lld etag=%s\n", status, (long long)contentLength, etag ? etag : "-");
 
     if (status == 304) {
