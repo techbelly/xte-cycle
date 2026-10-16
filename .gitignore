@@ -9,3 +9,5 @@ site/frame-check.png
 site/fonts/
 .DS_Store
 previews/
+backup/
+firmware/sleeptest/.pio/

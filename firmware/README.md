@@ -1,4 +1,4 @@
-# Firmware (phase 3, not started)
+# Firmware (phase 3, in progress)
 
 A small dedicated PlatformIO firmware for the Xteink X3 (ESP32-C3). It replaces
 the reader firmware. Each morning it:
@@ -24,3 +24,20 @@ implementation and `test/frame_test.rb` pins the bit order.
 Back up the stock flash (device powered on first, then cable):
 
     esptool.py --chip esp32c3 --baud 460800 read_flash 0 0x1000000 x3-stock-backup.bin
+
+## Findings from the device (16 Oct 2026)
+
+- This unit is **not** factory-locked: esptool enters download mode normally.
+  Chip ESP32-C3 rev 0.4, USB-Serial/JTAG mode, MAC 7c:e8:b1:70:c2:6c.
+- Stock partition table: nvs 0x9000, otadata 0xe000, app0 0x10000 (7.4 MB),
+  app1 0x780000, spiffs 0xef0000, coredump 0xff0000. otadata selects app0.
+- Stock backup: `backup/x3-stock-20261016.bin` (gitignored), copy in ~/Documents.
+  Restore with `esptool --chip esp32c3 write-flash 0x0 backup/x3-stock-20261016.bin`.
+- **Timer wake works.** `sleeptest/` deep-sleeps 20 s and wakes with
+  `ESP_SLEEP_WAKEUP_TIMER`, repeatedly, on USB power. GPIO13 held HIGH during sleep.
+- The panel is **not** an SSD1677: xteinkos's SSD1677 driver gets "Busy Timeout".
+  Use the FreeInk SDK display driver from CrossPoint, which probes UC8253 / UC8279d.
+- Flashing tip: `pio run -t upload` at 921600 can drop mid-write ("chip stopped
+  responding"). Flash with esptool at 460800 and always `verify-flash` after.
+- The device's USB port stays enumerated but unreadable while the chip is asleep.
+  Reflash during its awake window, or hold the power button to wake it first.
