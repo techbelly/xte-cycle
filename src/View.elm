@@ -31,7 +31,7 @@ view data =
             verdicts data
 
           else
-            dayOff
+            dayOff data.weekday
         , footer remark
         ]
 
@@ -106,11 +106,19 @@ verdictCard label call trains =
         ]
 
 
-dayOff : Html msg
-dayOff =
+dayOff : String -> Html msg
+dayOff weekday =
     div [ class "dayoff" ]
         [ div [ class "word" ] [ text "NO COMMUTE" ]
-        , div [ class "extra" ] [ text "Monday to Thursday are the only days that count." ]
+        , div [ class "extra" ]
+            [ text
+                (if weekday == "Friday" then
+                    "Outlook: strong possibility of Eric."
+
+                 else
+                    "Monday to Thursday are the only days that count."
+                )
+            ]
         ]
 
 
