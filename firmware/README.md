@@ -18,9 +18,24 @@ panel driver. It replaces the reader firmware. Twice a day it:
     cp secrets.example.ini secrets.ini   # fill in WiFi name and password
     pio run
     esptool --chip esp32c3 --port /dev/cu.usbmodem3101 --baud 460800 write-flash \
+      --flash-mode dio --flash-size 16MB --flash-freq 80m \
       0x0 .pio/build/x3/bootloader.bin 0x8000 .pio/build/x3/partitions.bin \
       0x10000 .pio/build/x3/firmware.bin
     pio device monitor
+
+`--flash-size 16MB` is essential: without it esptool keeps the bootloader
+image's default 4 MB header and the device boot-loops on "partition exceeds
+flash chip size". The device only accepts a flash while awake: press the power
+button and retry esptool until it connects (it is awake for ~10 s per wake).
+
+Serial log of a good run:
+
+    XTE boot=1 wake=cold
+    XTE wifi ok 192.168.1.210 rssi=-66
+    XTE time 2026-10-16 16:22:51 BST
+    XTE http 200 len=52272 etag="6ad23b9f-cc30"
+    XTE fetch painted
+    XTE sleeping 5827s (until next wake)
 
 `sleeptest/` is the earlier feasibility test and can be ignored.
 
