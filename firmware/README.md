@@ -12,6 +12,16 @@ panel driver. It replaces the reader firmware. Twice a day it:
 5. sleeps until the next wake. The power button forces a refresh. Any failure
    leaves the old picture up and retries in 30 minutes.
 
+## On the device
+
+- **Battery glyph** top-right, above the date, drawn from the BQ27220 gauge on
+  every repaint. A bolt means the gauge sees charge current. At 100% on USB the
+  charger has stopped, so it reads "discharging" and shows no bolt; that is normal.
+- **Diagnostics screen:** hold either side button and press the power button.
+  Shows build time, boot count, wake reason, battery, panel, WiFi, clock, HTTP
+  result and time to next wake. The next wake repaints the dashboard.
+- **Power button alone** forces a fresh download and repaint.
+
 ## Build and flash
 
     cd firmware/xte-cycle
