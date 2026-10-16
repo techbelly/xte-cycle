@@ -5,6 +5,7 @@
 // it, and deep-sleeps until the next wake. The power button forces a refresh.
 // On any failure it leaves the old picture up and retries in RETRY_MINUTES.
 #include <Arduino.h>
+#include <BatteryMonitor.h>
 #include <BoardConfig.h>
 #include <FreeInkDisplay.h>
 #include <Imu.h>
@@ -16,7 +17,10 @@
 #include <esp_http_client.h>
 #include <esp_sleep.h>
 #include <esp_sntp.h>
+#include <stdarg.h>
 #include <time.h>
+
+#include "Draw.h"
 
 static const int WAKE_HOURS[] = {4, 18};
 static const int RETRY_MINUTES = 30;
@@ -31,6 +35,47 @@ RTC_DATA_ATTR char lastEtag[96] = {0};
 
 static const gpio_num_t POWER_BTN = GPIO_NUM_3;
 static const gpio_num_t GPIO13_RAIL = GPIO_NUM_13;
+static const int LADDER_A = 1, LADDER_B = 2;  // side-button resistor ladders, idle near 4095
+
+// Diagnostics screen: wake with the power button while holding any side button.
+static bool diagMode = false;
+static char diag[12][48];
+static int diagLines = 0;
+static void note(const char* fmt, ...) {
+  if (diagLines >= 12) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(diag[diagLines++], sizeof(diag[0]), fmt, ap);
+  va_end(ap);
+}
+
+static bool sideButtonHeld() {
+  analogReadResolution(12);
+  analogSetPinAttenuation(LADDER_A, ADC_11db);
+  analogSetPinAttenuation(LADDER_B, ADC_11db);
+  const int a = analogRead(LADDER_A), b = analogRead(LADDER_B);
+  Serial.printf("XTE ladders a=%d b=%d\n", a, b);
+  return a < 3800 || b < 3800;
+}
+
+struct Battery {
+  bool known = false;
+  int percent = -1;
+  int millivolts = 0;
+  bool charging = false;
+};
+
+static Battery readBattery() {
+  Battery b;
+  const BatteryMonitor monitor;
+  const auto st = monitor.readStatus();
+  if (!st.supported) return b;
+  b.known = st.percentageKnown;
+  if (st.percentageKnown) b.percent = st.percentage;
+  if (st.millivoltsKnown) b.millivolts = st.millivolts;
+  if (st.chargingKnown) b.charging = st.charging;
+  return b;
+}
 
 static void holdRail() {
   gpio_hold_dis(GPIO13_RAIL);
@@ -66,6 +111,7 @@ static bool connectWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) delay(100);
   if (WiFi.status() != WL_CONNECTED) {
     Serial.printf("XTE wifi failed status=%d\n", (int)WiFi.status());
+    note("WIFI   FAILED  STATUS %d", (int)WiFi.status());
     // Diagnose without printing names: is the configured network even visible?
     WiFi.disconnect();
     const int n = WiFi.scanNetworks();
@@ -81,6 +127,7 @@ static bool connectWifi() {
     return false;
   }
   Serial.printf("XTE wifi ok %s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  note("WIFI   %s  %d DBM  %s", WIFI_SSID, WiFi.RSSI(), WiFi.localIP().toString().c_str());
   return true;
 }
 
@@ -108,6 +155,8 @@ static bool syncTime() {
   localtime_r(&now, &lt);
   Serial.printf("XTE time %04d-%02d-%02d %02d:%02d:%02d %s\n", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
                 lt.tm_hour, lt.tm_min, lt.tm_sec, lt.tm_isdst ? "BST" : "GMT");
+  note("TIME   %04d-%02d-%02d %02d:%02d:%02d %s", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min,
+       lt.tm_sec, lt.tm_isdst ? "BST" : "GMT");
   return true;
 }
 
@@ -169,6 +218,7 @@ static Fetch fetchAndPaint() {
     const int status = esp_http_client_get_status_code(client);
     const char* etag = responseEtag[0] ? responseEtag : nullptr;
     Serial.printf("XTE http %d len=%lld etag=%s\n", status, (long long)contentLength, etag ? etag : "-");
+    note("HTTP   %d  %lld B", status, (long long)contentLength);
 
     if (status == 304) {
       result = Fetch::Unchanged;
@@ -182,15 +232,15 @@ static Fetch fetchAndPaint() {
       char extra[1];
       const bool overrun = esp_http_client_read(client, extra, 1) > 0;
       if (got == want && !overrun) {
-        display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH, true);
         if (etag) strlcpy(lastEtag, etag, sizeof(lastEtag));
-        result = Fetch::Painted;
+        result = Fetch::Painted;  // buffer holds the new frame; caller paints
       } else {
         Serial.printf("XTE bad frame length got=%u want=%u overrun=%d\n", (unsigned)got, (unsigned)want, overrun);
       }
     }
   } else {
     Serial.println("XTE http open failed");
+    note("HTTP   OPEN FAILED");
   }
   esp_http_client_close(client);
   esp_http_client_cleanup(client);
@@ -203,8 +253,12 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   const auto cause = esp_sleep_get_wakeup_cause();
-  Serial.printf("XTE boot=%d wake=%s\n", bootCount,
-                cause == ESP_SLEEP_WAKEUP_TIMER ? "timer" : cause == ESP_SLEEP_WAKEUP_GPIO ? "button" : "cold");
+  const char* wakeName = cause == ESP_SLEEP_WAKEUP_TIMER ? "timer" : cause == ESP_SLEEP_WAKEUP_GPIO ? "button" : "cold";
+  Serial.printf("XTE boot=%d wake=%s\n", bootCount, wakeName);
+  diagMode = cause == ESP_SLEEP_WAKEUP_GPIO && sideButtonHeld();
+  if (diagMode) Serial.println("XTE diagnostics mode");
+  note("XTE-CYCLE  BUILT %s %s", __DATE__, __TIME__);
+  note("BOOT   #%d  WAKE %s", bootCount, wakeName);
 
   BoardConfig::selectDevice(BoardConfig::Board::XteinkX3);
   freeink::applyXteinkDisplayController();
@@ -217,11 +271,17 @@ void setup() {
     freeink::Imu imu;
     const bool slept = imu.begin() && imu.sleep();
     Serial.printf("XTE imu %s\n", slept ? "asleep" : "not found");
+    note("IMU    %s", slept ? "ASLEEP" : "NOT FOUND");
   }
+  const Battery battery = readBattery();
+  Serial.printf("XTE battery %d%% %dmV %s\n", battery.percent, battery.millivolts,
+                battery.charging ? "charging" : "discharging");
+  note("BATT   %d%%  %d MV  %s", battery.percent, battery.millivolts, battery.charging ? "CHARGING" : "ON BATTERY");
 
   SPI.begin(8, 7, 10, 21);
   display.setDisplayX3();
   display.begin();
+  note("PANEL  %s  %ux%u", BoardConfig::ACTIVE.name, display.getDisplayWidth(), display.getDisplayHeight());
 
   if (!connectWifi()) sleepFor(RETRY_MINUTES * 60, "no wifi");
   const bool timeOk = syncTime();
@@ -231,9 +291,28 @@ void setup() {
 
   const Fetch f = fetchAndPaint();
   Serial.printf("XTE fetch %s\n", f == Fetch::Painted ? "painted" : f == Fetch::Unchanged ? "unchanged" : "FAILED");
+  note("FETCH  %s", f == Fetch::Painted ? "NEW FRAME" : f == Fetch::Unchanged ? "UNCHANGED" : "FAILED");
 
-  if (f == Fetch::Failed || !timeOk) sleepFor(RETRY_MINUTES * 60, "retry");
-  sleepFor(secondsToNextWake(), "until next wake");
+  const uint64_t nextSleep = (f == Fetch::Failed || !timeOk) ? RETRY_MINUTES * 60 : secondsToNextWake();
+  Draw draw(display.getFrameBuffer(), display.getDisplayWidth(), display.getDisplayHeight());
+
+  if (diagMode) {
+    // The diagnostics screen replaces the frame; forget the ETag so the next
+    // wake downloads and paints the dashboard again.
+    lastEtag[0] = 0;
+    note("NEXT   WAKE IN %lluH %02lluM  HEAP %u KB", nextSleep / 3600, (nextSleep % 3600) / 60, ESP.getFreeHeap() / 1024);
+    display.clearScreen(0xFF);
+    draw.frame(16, 16, display.getDisplayWidth() - 32, display.getDisplayHeight() - 32, 3);
+    for (int i = 0; i < diagLines; i++) draw.text(36, 40 + i * 36, diag[i], 3);
+    draw.battery(display.getDisplayWidth() - 80, 28, battery.percent, battery.charging);
+    display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH, true);
+  } else if (f == Fetch::Painted) {
+    // Battery glyph in the blank top-right corner, above the date stamp.
+    if (battery.known) draw.battery(display.getDisplayWidth() - 56, 6, battery.percent, battery.charging);
+    display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH, true);
+  }
+
+  sleepFor(nextSleep, (f == Fetch::Failed || !timeOk) ? "retry" : "until next wake");
 }
 
 void loop() {}
