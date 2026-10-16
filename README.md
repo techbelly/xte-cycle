@@ -4,15 +4,15 @@ A wall-mounted Xteink X3 e-reader that shows, every morning, the weather and
 whether to cycle or take the train to work. Nothing runs live: a GitHub Action
 builds one static image a day and the device fetches it from GitHub Pages.
 
-    GitHub Actions, 05:30 local
+    GitHub Actions, 03:15 and 17:15 local
       ruby pipeline/fetch_weather.rb   Open-Meteo -> site/data.js (facts only)
       elm make                          decision + layout -> site/elm.js
       node screenshot.mjs               792x528 PNG via headless Chromium
       ruby pipeline/pack_frame.rb       PNG -> site/frame.bin (1 bit/pixel)
       deploy site/ to GitHub Pages
 
-    Xteink X3 (firmware/, phase 3)
-      wake 06:15 -> WiFi -> GET frame.bin -> paint -> sleep
+    Xteink X3 (firmware/)
+      wake 04:00 and 18:00 -> WiFi -> NTP -> GET frame.bin -> paint -> sleep
 
 ## Layout
 

@@ -2,9 +2,12 @@ name: morning
 
 on:
   schedule:
-    # 05:30 local, whichever of GMT or BST applies. The other run is harmless.
-    - cron: "30 4 * * *"
-    - cron: "30 5 * * *"
+    # The device wakes at 04:00 and 18:00 local. Build at 03:15 and 17:15 local,
+    # whichever of GMT or BST applies; the extra run each time is harmless.
+    - cron: "15 2 * * *"
+    - cron: "15 3 * * *"
+    - cron: "15 16 * * *"
+    - cron: "15 17 * * *"
   workflow_dispatch:
   push:
     branches: [main]

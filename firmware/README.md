@@ -1,13 +1,28 @@
-# Firmware (phase 3, in progress)
+# Firmware
 
-A small dedicated PlatformIO firmware for the Xteink X3 (ESP32-C3). It replaces
-the reader firmware. Each morning it:
+`xte-cycle/` is a small dedicated PlatformIO firmware for the Xteink X3
+(ESP32-C3), built on the FreeInk SDK (`freeink-sdk/`, a git submodule) for the
+panel driver. It replaces the reader firmware. Twice a day it:
 
-1. wakes from deep sleep on an RTC timer (around 06:15 local),
-2. joins WiFi with baked-in credentials and syncs time over NTP,
-3. GETs `frame.bin` from the GitHub Pages URL with `If-None-Match`,
-4. writes the bytes straight into the panel buffer and does one full refresh,
-5. sleeps until the next 06:15, with the power button as a second wake source.
+1. wakes from deep sleep on the RTC timer at 04:00 and 18:00 local
+   (today's frame in the morning, tomorrow's in the evening),
+2. joins WiFi with baked-in credentials and syncs the clock over NTP,
+3. GETs `frame.bin` from GitHub Pages with `If-None-Match`,
+4. streams the bytes straight into the panel buffer and does one full refresh,
+5. sleeps until the next wake. The power button forces a refresh. Any failure
+   leaves the old picture up and retries in 30 minutes.
+
+## Build and flash
+
+    cd firmware/xte-cycle
+    cp secrets.example.ini secrets.ini   # fill in WiFi name and password
+    pio run
+    esptool --chip esp32c3 --port /dev/cu.usbmodem3101 --baud 460800 write-flash \
+      0x0 .pio/build/x3/bootloader.bin 0x8000 .pio/build/x3/partitions.bin \
+      0x10000 .pio/build/x3/firmware.bin
+    pio device monitor
+
+`sleeptest/` is the earlier feasibility test and can be ignored.
 
 Unlike CrossPoint it must **not** drive GPIO13 low on sleep: that cuts the
 battery rail and nothing is left to fire the timer. Keep the device on USB power.

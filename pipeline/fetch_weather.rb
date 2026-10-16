@@ -1,8 +1,11 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Fetches today's hourly forecast from Open-Meteo and writes facts only
-# (no opinions) to site/data.js and site/data.json. The Elm app decides.
+# Fetches the hourly forecast from Open-Meteo and writes facts only (no
+# opinions) to site/data.js and site/data.json. The Elm app decides.
+#
+# Which day: before noon local time the frame is for today (the 04:00 device
+# wake); from noon on it is for tomorrow (the 18:00 wake shows the next day).
 #
 # Usage: ruby pipeline/fetch_weather.rb [config.yml] [site/]
 
@@ -20,7 +23,9 @@ tz = config.fetch("timezone")
 
 ENV["TZ"] = tz
 now = Time.now
-today = now.strftime("%Y-%m-%d")
+target = now.hour >= 12 ? now + 86_400 : now
+target_date = target.strftime("%Y-%m-%d")
+day_index = now.hour >= 12 ? 1 : 0
 
 params = {
   latitude: loc.fetch("latitude"),
@@ -30,7 +35,7 @@ params = {
   daily: %w[sunrise sunset temperature_2m_max temperature_2m_min weather_code].join(","),
   timezone: tz,
   wind_speed_unit: "kmh",
-  forecast_days: 1
+  forecast_days: 2
 }
 uri = URI("https://api.open-meteo.com/v1/forecast")
 uri.query = URI.encode_www_form(params)
@@ -53,7 +58,7 @@ d = raw.fetch("daily")
 
 hours = h["time"].each_index.filter_map do |i|
   t = h["time"][i]
-  next unless t.start_with?(today)
+  next unless t.start_with?(target_date)
 
   {
     hour: t[11, 2].to_i,
@@ -67,21 +72,21 @@ hours = h["time"].each_index.filter_map do |i|
 end
 
 data = {
-  date: today,
-  weekday: now.strftime("%A"),
-  yday: now.yday,
-  generated_at: now.strftime("%H:%M"),
+  date: target_date,
+  weekday: target.strftime("%A"),
+  yday: target.yday,
+  generated_at: now.strftime("%a %H:%M"),
   location: loc.fetch("name"),
   daily: {
-    sunrise: d["sunrise"][0][11, 5],
-    sunset: d["sunset"][0][11, 5],
-    tmax: d["temperature_2m_max"][0],
-    tmin: d["temperature_2m_min"][0],
-    code: d["weather_code"][0]
+    sunrise: d["sunrise"][day_index][11, 5],
+    sunset: d["sunset"][day_index][11, 5],
+    tmax: d["temperature_2m_max"][day_index],
+    tmin: d["temperature_2m_min"][day_index],
+    code: d["weather_code"][day_index]
   },
   hours: hours
 }
 
 File.write(File.join(out_dir, "data.json"), JSON.pretty_generate(data) + "\n")
 File.write(File.join(out_dir, "data.js"), "window.XTE_DATA = #{JSON.generate(data)};\n")
-puts "Wrote #{hours.size} hours for #{data[:weekday]} #{today} (generated #{data[:generated_at]})"
+puts "Wrote #{hours.size} hours for #{data[:weekday]} #{target_date} (generated #{data[:generated_at]})"

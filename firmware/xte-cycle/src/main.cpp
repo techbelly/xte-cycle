@@ -1,18 +1,31 @@
-// xte-cycle: display bring-up. Probes the panel controller, paints the
-// embedded frame (site/frame.bin), then deep-sleeps. Power button wakes.
+// xte-cycle firmware for the Xteink X3.
+//
+// Wakes at WAKE_HOURS (local time), joins WiFi, syncs the clock over NTP,
+// fetches FRAME_URL (792x528, 1 bpp, 52,272 bytes) with If-None-Match, paints
+// it, and deep-sleeps until the next wake. The power button forces a refresh.
+// On any failure it leaves the old picture up and retries in RETRY_MINUTES.
 #include <Arduino.h>
 #include <BoardConfig.h>
 #include <FreeInkDisplay.h>
 #include <SPI.h>
+#include <WiFi.h>
 #include <XteinkDetect.h>
 #include <driver/gpio.h>
+#include <esp_crt_bundle.h>
+#include <esp_http_client.h>
 #include <esp_sleep.h>
+#include <time.h>
 
-#include "frame_data.h"
+static const int WAKE_HOURS[] = {4, 18};
+static const int RETRY_MINUTES = 30;
+static const char* TZ_LONDON = "GMT0BST,M3.5.0/1,M10.5.0";
+static const uint32_t WIFI_TIMEOUT_MS = 20000;
+static const uint32_t NTP_TIMEOUT_MS = 10000;
 
-// Pins are taken from BoardConfig::ACTIVE at begin(); these are the X3's for reference.
 freeink::FreeInkDisplay display(8, 10, 21, 4, 5, 6);
+
 RTC_DATA_ATTR int bootCount = 0;
+RTC_DATA_ATTR char lastEtag[96] = {0};
 
 static const gpio_num_t POWER_BTN = GPIO_NUM_3;
 static const gpio_num_t GPIO13_RAIL = GPIO_NUM_13;
@@ -24,51 +37,157 @@ static void holdRail() {
   gpio_hold_en(GPIO13_RAIL);
 }
 
-static void sleepFor(uint64_t seconds) {
+static void sleepFor(uint64_t seconds, const char* why) {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  display.deepSleep();
   gpio_pullup_en(POWER_BTN);
   gpio_pulldown_dis(POWER_BTN);
   esp_deep_sleep_enable_gpio_wakeup(1ULL << POWER_BTN, ESP_GPIO_WAKEUP_GPIO_LOW);
   esp_sleep_enable_timer_wakeup(seconds * 1000000ULL);
-  Serial.printf("XTE sleeping %llus\n", seconds);
+  Serial.printf("XTE sleeping %llus (%s)\n", seconds, why);
   Serial.flush();
   delay(50);
   esp_deep_sleep_start();
+}
+
+static bool connectWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  const uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) delay(100);
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("XTE wifi failed");
+    return false;
+  }
+  Serial.printf("XTE wifi ok %s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  return true;
+}
+
+static bool haveTime() {
+  time_t now = time(nullptr);
+  return now > 1700000000;  // after Nov 2023, so not the 1970 default
+}
+
+static bool syncTime() {
+  configTzTime(TZ_LONDON, "pool.ntp.org", "time.cloudflare.com", "time.google.com");
+  const uint32_t start = millis();
+  while (!haveTime() && millis() - start < NTP_TIMEOUT_MS) delay(100);
+  if (!haveTime()) {
+    Serial.println("XTE ntp failed");
+    return false;
+  }
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  Serial.printf("XTE time %04d-%02d-%02d %02d:%02d:%02d %s\n", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+                lt.tm_hour, lt.tm_min, lt.tm_sec, lt.tm_isdst ? "BST" : "GMT");
+  return true;
+}
+
+// Seconds from now until the next WAKE_HOURS boundary (local time), at least 60.
+static uint64_t secondsToNextWake() {
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  time_t best = 0;
+  for (int dayOffset = 0; dayOffset <= 1 && best == 0; dayOffset++) {
+    for (int h : WAKE_HOURS) {
+      struct tm cand = lt;
+      cand.tm_mday += dayOffset;
+      cand.tm_hour = h;
+      cand.tm_min = 0;
+      cand.tm_sec = 0;
+      cand.tm_isdst = -1;  // let mktime resolve GMT/BST for that day
+      time_t t = mktime(&cand);
+      if (t > now + 60 && (best == 0 || t < best)) best = t;
+    }
+  }
+  return static_cast<uint64_t>(best - now);
+}
+
+enum class Fetch { Painted, Unchanged, Failed };
+
+// Streams the frame straight into the display buffer. Paints only when the
+// full expected length arrived.
+static Fetch fetchAndPaint() {
+  uint8_t* buf = display.getFrameBuffer();
+  const size_t want = display.getBufferSize();
+
+  esp_http_client_config_t cfg = {};
+  cfg.url = FRAME_URL;
+  cfg.timeout_ms = 15000;
+  cfg.crt_bundle_attach = esp_crt_bundle_attach;
+  cfg.buffer_size = 2048;
+  esp_http_client_handle_t client = esp_http_client_init(&cfg);
+  if (!client) return Fetch::Failed;
+  esp_http_client_set_header(client, "User-Agent", "xte-cycle/1.0 (ESP32-C3)");
+  if (lastEtag[0]) esp_http_client_set_header(client, "If-None-Match", lastEtag);
+
+  Fetch result = Fetch::Failed;
+  if (esp_http_client_open(client, 0) == ESP_OK) {
+    const int64_t contentLength = esp_http_client_fetch_headers(client);
+    const int status = esp_http_client_get_status_code(client);
+    char* etag = nullptr;
+    esp_http_client_get_header(client, "ETag", &etag);
+    Serial.printf("XTE http %d len=%lld etag=%s\n", status, (long long)contentLength, etag ? etag : "-");
+
+    if (status == 304) {
+      result = Fetch::Unchanged;
+    } else if (status == 200 && (contentLength < 0 || static_cast<size_t>(contentLength) == want)) {
+      size_t got = 0;
+      while (got < want) {
+        const int n = esp_http_client_read(client, reinterpret_cast<char*>(buf) + got, want - got);
+        if (n <= 0) break;
+        got += n;
+      }
+      char extra[1];
+      const bool overrun = esp_http_client_read(client, extra, 1) > 0;
+      if (got == want && !overrun) {
+        display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH, true);
+        if (etag) strlcpy(lastEtag, etag, sizeof(lastEtag));
+        result = Fetch::Painted;
+      } else {
+        Serial.printf("XTE bad frame length got=%u want=%u overrun=%d\n", (unsigned)got, (unsigned)want, overrun);
+      }
+    }
+  } else {
+    Serial.println("XTE http open failed");
+  }
+  esp_http_client_close(client);
+  esp_http_client_cleanup(client);
+  return result;
 }
 
 void setup() {
   bootCount++;
   holdRail();
   Serial.begin(115200);
-  delay(2000);
-  Serial.printf("XTE boot=%d wake=%d\n", bootCount, (int)esp_sleep_get_wakeup_cause());
+  delay(1500);
+  const auto cause = esp_sleep_get_wakeup_cause();
+  Serial.printf("XTE boot=%d wake=%s\n", bootCount,
+                cause == ESP_SLEEP_WAKEUP_TIMER ? "timer" : cause == ESP_SLEEP_WAKEUP_GPIO ? "button" : "cold");
 
   BoardConfig::selectDevice(BoardConfig::Board::XteinkX3);
-  const bool promoted = freeink::applyXteinkDisplayController();
-  const auto& diag = freeink::getXteinkDisplayProbeDiag();
-  Serial.printf("XTE probe ver=%02x %02x %02x verdict=%u promoted=%d busyTimeout=%d\n", diag.ver[0], diag.ver[1],
-                diag.ver[2], diag.verdict, promoted, diag.busyTimedOut);
+  freeink::applyXteinkDisplayController();
   if (BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279) {
     BoardConfig::selectDevice(BoardConfig::Board::XteinkX3Uc8279);
   }
-  Serial.printf("XTE controller=%s profile=%s\n",
-                BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279 ? "UC8279d" : "UC8253",
-                BoardConfig::ACTIVE.name);
-
   SPI.begin(8, 7, 10, 21);
   display.setDisplayX3();
   display.begin();
-  Serial.printf("XTE panel %ux%u buffer=%u frame=%u\n", display.getDisplayWidth(), display.getDisplayHeight(),
-                display.getBufferSize(), frame_bin_len);
 
-  if (display.getBufferSize() == frame_bin_len) {
-    memcpy(display.getFrameBuffer(), frame_bin, frame_bin_len);
-  } else {
-    display.clearScreen(0xFF);
-  }
-  display.displayBuffer(freeink::FreeInkDisplay::FULL_REFRESH, true);
-  Serial.println("XTE painted");
-  display.deepSleep();
-  sleepFor(600);
+  if (!connectWifi()) sleepFor(RETRY_MINUTES * 60, "no wifi");
+  const bool timeOk = syncTime();
+
+  // A button press forces a fresh download even if the server says unchanged.
+  if (cause == ESP_SLEEP_WAKEUP_GPIO) lastEtag[0] = 0;
+
+  const Fetch f = fetchAndPaint();
+  Serial.printf("XTE fetch %s\n", f == Fetch::Painted ? "painted" : f == Fetch::Unchanged ? "unchanged" : "FAILED");
+
+  if (f == Fetch::Failed || !timeOk) sleepFor(RETRY_MINUTES * 60, "retry");
+  sleepFor(secondsToNextWake(), "until next wake");
 }
 
 void loop() {}
